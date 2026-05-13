@@ -2,6 +2,8 @@
 
 **语言 / Language:** [English](./README.md) | 中文
 
+> 按 **Claude Code 技能**（`SKILL.md` 约定）格式编写。底层是纯 Markdown + Python，所以在其它编码 Agent 里也一样能跑 —— **Cursor、Windsurf、Cline、Aider、Cody** 等都行，只要把 `SKILL.md` 作为规则 / 上下文文件喂给 Agent（详见[安装](#一次性安装)）。
+
 ## 适用场景
 
 > 一名销售人员 —— 或者任何**懂产品但不写代码的领域专家** —— 明天要给客户展示一个可以打开看的 Demo 页面。
@@ -19,7 +21,7 @@
 | 技能 | 作用 |
 | --- | --- |
 | [`static-demo4domain-expert`](./static-demo4domain-expert) | 通过追问式访谈采访销售人员，根据回答生成一个精致、可直接运行的 Vue 3 + Vite Demo 项目，并附带 `README.md` 与 `CONTEXT.md`，方便开发人员后续接手。 |
-| [`static-resource2nginx`](./static-resource2nginx) | 构建上一步生成的 Vue 项目，并把它上传到一台已配置好 nginx 的远程服务器。每个 Demo 部署在 `http://<服务器>/<项目名>/`。 |
+| [`deploy-static-resource2nginx`](./deploy-static-resource2nginx) | 构建上一步生成的 Vue 项目，并把它上传到一台已配置好 nginx 的远程服务器。每个 Demo 部署在 `http://<服务器>/<项目名>/`。 |
 
 使用顺序：**生成 → 部署**。第一次完整跑完大约 15 分钟，之后每次重新部署不到 1 分钟。
 
@@ -27,18 +29,20 @@
 
 ## 一次性安装
 
-把这两个文件夹复制到你的 Claude 技能目录：
+**Claude Code** —— 把这两个文件夹复制到你的技能目录：
 
 ```bash
-cp -R static-demo4domain-expert  ~/.claude/skills/
-cp -R static-resource2nginx      ~/.claude/skills/
+cp -R static-demo4domain-expert     ~/.claude/skills/
+cp -R deploy-static-resource2nginx  ~/.claude/skills/
 ```
 
-部署步骤还需要 Python 加两个库（macOS 和 Windows 都可用）：
+**其它 Agent**（Cursor、Windsurf、Cline、Aider、Cody …）—— 把仓库 clone 到任意位置，然后把每个技能下的 `SKILL.md` 当作规则 / 上下文 / 系统提示词喂给 Agent。之后 Agent 会从同一个目录里调用 `scripts/*.py`。示例：
 
-```bash
-pip install paramiko scp
-```
+- **Cursor** —— 把 `SKILL.md` 内容放进 `.cursor/rules/*.mdc`（或者通过 "Add Context" 直接附加该文件）
+- **Windsurf** —— 把目录加入工作区，在 `.windsurfrules` 中引用 `SKILL.md`
+- **Cline / Aider** —— 把 `SKILL.md` 作为系统提示词，或在会话开始时 `/read` 它
+
+部署步骤还需要 Python 3.8+（macOS 和 Windows 都可用）。所需的两个库（`paramiko`、`scp`）会在你第一次运行技能时自动安装到技能目录下的本地 venv 中 —— 你不用手动 `pip install`。
 
 整个工具链就这些。
 
@@ -80,20 +84,21 @@ pip install paramiko scp
 }
 ```
 
-仅此而已。其它字段（端口、sudo、HTTPS、自定义构建命令、SSH 密钥路径）都是可选的，详细说明见 [`static-resource2nginx/templates/server.config.example.json`](./static-resource2nginx/templates/server.config.example.json) 和 [`static-resource2nginx/REFERENCE.md`](./static-resource2nginx/REFERENCE.md)。
+仅此而已。其它字段（端口、sudo、HTTPS、自定义构建命令、SSH 密钥路径）都是可选的，详细说明见 [`deploy-static-resource2nginx/templates/server.config.example.json`](./deploy-static-resource2nginx/templates/server.config.example.json) 和 [`deploy-static-resource2nginx/REFERENCE.md`](./deploy-static-resource2nginx/REFERENCE.md)。
 
 然后在 Claude Code 中输入：
 
 ```
-/static-resource2nginx
+/deploy-static-resource2nginx
 ```
 
 这个技能会：
 
 1. 检查 `server.config.json` 是否存在且完整 —— 缺字段就停下来告诉你缺什么。
-2. 用正确的 `--base=/acme-demo/` 参数构建项目。
-3. 通过 SSH 登录服务器，创建 `/var/www/apps/acme-demo/`，上传 `dist/`。
-4. 打印线上访问地址：`http://your-server.example.com/acme-demo/`。
+2. 检查远程 nginx 配置（只读）。如果配置不匹配，会暂停并询问你是否运行 `setup_nginx.py` —— 详见下方"服务器准备工作"。
+3. 用正确的 `--base=/acme-demo/` 参数构建项目。
+4. 通过 SSH 登录服务器，创建 `/var/www/apps/acme-demo/`，上传 `dist/`。
+5. 打印线上访问地址：`http://your-server.example.com/acme-demo/`。
 
 打开链接 —— Demo 就上线了。
 
@@ -101,27 +106,27 @@ pip install paramiko scp
 
 ## 服务器准备工作（每台服务器只做一次）
 
-服务器需要：
+你不需要手动配置 nginx。第一次往新服务器部署时，技能会通过 SSH 登录检查 nginx 配置；如果不匹配预期布局，它会询问你是否运行 **`setup_nginx.py`**，这个脚本会：
 
-1. **运行中的 nginx**，配置必须是以下这段（技能默认按这个布局工作）：
+- 如果 nginx 还没装，用 `apt` 或 `yum` 自动安装。
+- 把下面这段标准站点配置写入 `/etc/nginx/sites-available/static-apps`（Debian/Ubuntu）或 `/etc/nginx/conf.d/static-apps.conf`（RHEL/CentOS）。
+- 备份并停用原有的默认站点，运行 `nginx -t` 校验配置，再重载 nginx。
+- 如果校验失败，所有改动都会自动回滚。
 
-   ```nginx
-   server {
-       listen 80;
-       server_name _;
-       root /var/www/apps;
-       location / { try_files $uri $uri/ /index.html; }
-   }
-   ```
+它写入的配置块：
 
-2. **可写的网站目录** —— SSH 用户必须能写入 `/var/www/apps`。在服务器上执行一次：
+```nginx
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    root /var/www/apps;
+    index index.html index.htm index.nginx-debian.html;
+    server_name _;
+    location / { try_files $uri $uri/ /index.html; }
+}
+```
 
-   ```bash
-   sudo mkdir -p /var/www/apps
-   sudo chown -R $USER:$USER /var/www/apps
-   ```
-
-   （如果用户有免密 sudo 权限，也可以在配置中设 `"use_sudo": true`。）
+`setup_nginx.py` 只需要一次性的服务器 root 权限或免密 sudo。日常部署时，SSH 用户只需要对 `/var/www/apps` 有写权限 —— 这个权限 `setup_nginx.py` 会替你配置好。
 
 ---
 
@@ -147,7 +152,7 @@ http://your-server.example.com/q3-launch/
 | `AuthenticationException` | 主机地址、用户名或密码错误，仔细核对。 |
 | 远程 `mkdir` 提示 `Permission denied` | 执行上面"服务器准备工作"里的 `chown` 命令。 |
 | 部署后页面空白 | 你访问的是 `http://host/acme-demo`，没有最后那个斜杠。加上 `/` 再访问。 |
-| 在子路径上刷新（如 `/acme-demo/about`）显示错误内容 | nginx 配置的已知限制 —— 详细解决方案见 [`static-resource2nginx/REFERENCE.md`](./static-resource2nginx/REFERENCE.md#deep-link-spa-routing-under-a-sub-path)，提供三种修复方式。 |
+| 在子路径上刷新（如 `/acme-demo/about`）显示错误内容 | nginx 配置的已知限制 —— 详细解决方案见 [`deploy-static-resource2nginx/REFERENCE.md`](./deploy-static-resource2nginx/REFERENCE.md#deep-link-spa-routing-under-a-sub-path)，提供三种修复方式。 |
 
 其它问题查看两个技能各自的 `REFERENCE.md`，里面有完整说明。
 
@@ -158,5 +163,5 @@ http://your-server.example.com/q3-launch/
 ```text
 /static-demo4domain-expert         # 访谈 + 生成 Demo
 # 添加 server.config.json，填四个字段
-/static-resource2nginx             # 构建 + 上传，拿到访问链接
+/deploy-static-resource2nginx             # 构建 + 上传，拿到访问链接
 ```

@@ -1,4 +1,4 @@
-# static-resource2nginx — Reference
+# deploy-static-resource2nginx — Reference
 
 ## All config fields
 
@@ -15,11 +15,59 @@ The example template ships with only the four required fields. Every other field
 | `deploy.project_name` | *(required)* | Sub-directory name under `remote_root`. Also becomes the URL path. |
 | `deploy.remote_root` | `/var/www/apps` | Nginx web root on the server. |
 | `deploy.use_sudo` | `false` | Prefix remote `mkdir`/`rm`/`chmod` with `sudo`. Requires passwordless sudo. |
+| `deploy.skip_nginx_verify` | `false` | Skip the pre-flight remote-nginx check inside `deploy.py`. Only set this if you've already verified the server manually. |
 | `deploy.scheme` | `http` | Used only for the printed access URL — switch to `https` after you install a cert. |
 | `build.skip_npm_install` | `false` | Skip `npm install` (useful for CI where deps are pre-installed). |
 | `build.build_command` | `""` | Override the default `vite build` command. The skill still appends `--base=/<project_name>/`. |
 
 **Security note:** `server.config.json` contains credentials. Add it to `.gitignore` before your first commit.
+
+## Scripts
+
+| Script | Purpose | Modifies remote? |
+| --- | --- | --- |
+| `scripts/check_config.py <cfg-path>` | Validates `server.config.json` locally. Does not connect to the server. | No |
+| `scripts/verify_nginx.py <project-dir>` | SSHes in, parses nginx config, returns 0/1/2. Read-only. | No |
+| `scripts/setup_nginx.py <project-dir>` | Installs the canonical nginx site config. Backs up existing config, validates with `nginx -t`, rolls back on failure. Will offer to install nginx itself if missing. Pass `--yes` to skip the confirmation prompt. | **Yes — writes /etc/nginx and reloads nginx.** |
+| `scripts/deploy.py <project-dir>` | Pre-flight verify → build → upload → print URL. | Writes only inside `<remote_root>/<project_name>/`. |
+
+`verify_nginx.py` exit codes:
+- **0** — nginx is OK and a server block matches the expected layout.
+- **1** — nginx isn't installed, or its config could not be read.
+- **2** — nginx is installed but no server block matches; run `setup_nginx.py`.
+- **3** — bad arguments or config (local error before any SSH).
+
+`setup_nginx.py` requires either the SSH user to be root or to have passwordless sudo for `nginx`, `tee`, `mkdir`, `chown`, `rm`, `ln`, `systemctl`. The script will refuse to run if it can't `sudo -n true`.
+
+## What `setup_nginx.py` writes
+
+On Debian/Ubuntu (detected by presence of `/etc/nginx/sites-enabled`):
+- Writes the config to `/etc/nginx/sites-available/static-apps`.
+- Symlinks it from `/etc/nginx/sites-enabled/static-apps`.
+- Backs up and removes the default symlink at `/etc/nginx/sites-enabled/default` (the original file under `sites-available/` is untouched).
+
+On RHEL/CentOS/Fedora (no `sites-enabled`):
+- Writes the config to `/etc/nginx/conf.d/static-apps.conf`.
+- Backs up and removes `/etc/nginx/conf.d/default.conf` if present.
+
+In both cases the script runs `nginx -t` before reloading. If validation fails it restores every backup it made and exits non-zero — the server's nginx is left in its prior working state.
+
+The content of the installed block is:
+
+```
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    root <remote_root>;
+    index index.html index.htm index.nginx-debian.html;
+    server_name _;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+`<remote_root>` is taken from `deploy.remote_root` in the config (default `/var/www/apps`).
 
 ## Deep-link SPA routing under a sub-path
 

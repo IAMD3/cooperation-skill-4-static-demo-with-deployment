@@ -2,6 +2,8 @@
 
 **Language / 语言:** English | [中文](./README.zh-CN.md)
 
+> Built as **Claude Code skills** (the `SKILL.md` convention). The prompts and scripts are plain Markdown + Python, so they work just as well in other coding agents — **Cursor, Windsurf, Cline, Aider, Cody**, etc. — by pointing the agent at `SKILL.md` as a rule / context file (see [Install](#install-one-time)).
+
 ## The use case
 
 > A salesperson — or any **domain expert** who knows the product but doesn't code — needs a working demo page to show a client tomorrow.
@@ -19,7 +21,7 @@ The same server can host as many demos as the team needs — each one isolated u
 | Skill | What it does |
 | --- | --- |
 | [`static-demo4domain-expert`](./static-demo4domain-expert) | Interviews a salesperson, then scaffolds a polished, runnable Vue 3 + Vite demo from their answers — including `README.md` and `CONTEXT.md` so developers can pick up the project later. |
-| [`static-resource2nginx`](./static-resource2nginx) | Builds that Vue project and uploads it to a remote nginx server. Each demo lives at `http://<server>/<project-name>/`. |
+| [`deploy-static-resource2nginx`](./deploy-static-resource2nginx) | Builds that Vue project and uploads it to a remote nginx server. Each demo lives at `http://<server>/<project-name>/`. |
 
 You use them in order: **build → deploy**. Total time: about 15 minutes for the first demo, under 1 minute for subsequent re-deploys.
 
@@ -27,18 +29,20 @@ You use them in order: **build → deploy**. Total time: about 15 minutes for th
 
 ## Install (one time)
 
-Copy both folders into your Claude skills directory:
+**Claude Code** — copy both folders into your skills directory:
 
 ```bash
-cp -R static-demo4domain-expert  ~/.claude/skills/
-cp -R static-resource2nginx      ~/.claude/skills/
+cp -R static-demo4domain-expert     ~/.claude/skills/
+cp -R deploy-static-resource2nginx  ~/.claude/skills/
 ```
 
-For the deploy step you also need Python + two libraries (works on macOS and Windows):
+**Other agents** (Cursor, Windsurf, Cline, Aider, Cody, …) — clone the repo somewhere and point your agent at each skill's `SKILL.md` as a rule / context / system-prompt file. The agent then runs the same `scripts/*.py` from that folder. Examples:
 
-```bash
-pip install paramiko scp
-```
+- **Cursor** — drop `SKILL.md` content into `.cursor/rules/*.mdc` (or attach the file via "Add Context")
+- **Windsurf** — add the folder to your workspace and reference `SKILL.md` in `.windsurfrules`
+- **Cline / Aider** — pass `SKILL.md` as a system prompt or `/read` it at session start
+
+For the deploy step you also need Python 3.8+ (works on macOS and Windows). The required libraries (`paramiko`, `scp`) install themselves into a local venv the first time you run the skill — you don't have to `pip install` anything.
 
 That's the entire toolchain.
 
@@ -80,20 +84,21 @@ In the same project directory, create one file: **`server.config.json`**. The mi
 }
 ```
 
-That's it. All other fields (port, sudo, HTTPS, custom build command, SSH key path) are optional and documented in [`static-resource2nginx/templates/server.config.example.json`](./static-resource2nginx/templates/server.config.example.json).
+That's it. All other fields (port, sudo, HTTPS, custom build command, SSH key path) are optional and documented in [`deploy-static-resource2nginx/templates/server.config.example.json`](./deploy-static-resource2nginx/templates/server.config.example.json).
 
 Then in Claude Code, type:
 
 ```
-/static-resource2nginx
+/deploy-static-resource2nginx
 ```
 
 The skill will:
 
 1. Verify `server.config.json` exists and is complete — if not, it stops and tells you what's missing.
-2. Build the project with the correct `--base=/acme-demo/` flag.
-3. SSH in, create `/var/www/apps/acme-demo/`, upload `dist/`.
-4. Print the live URL: `http://your-server.example.com/acme-demo/`.
+2. Verify the remote nginx config (read-only). If it doesn't match, it pauses and offers to run `setup_nginx.py` for you — see "Server prerequisites" below.
+3. Build the project with the correct `--base=/acme-demo/` flag.
+4. SSH in, create `/var/www/apps/acme-demo/`, upload `dist/`.
+5. Print the live URL: `http://your-server.example.com/acme-demo/`.
 
 Open the URL — your demo is live.
 
@@ -101,27 +106,27 @@ Open the URL — your demo is live.
 
 ## Server prerequisites (one time per server)
 
-Your server needs:
+You don't have to configure nginx by hand. On the first deploy to a new server, the skill SSHes in and checks the nginx config; if it doesn't match the expected layout, it offers to run **`setup_nginx.py`**, which will:
 
-1. **nginx running** with this single config block (the skill assumes it):
+- Install nginx via `apt` or `yum` if it isn't already.
+- Write the canonical site config (listed below) to `/etc/nginx/sites-available/static-apps` (Debian/Ubuntu) or `/etc/nginx/conf.d/static-apps.conf` (RHEL/CentOS).
+- Back up any existing default site, disable it, validate with `nginx -t`, and reload nginx.
+- If validation fails, every change is rolled back automatically.
 
-   ```nginx
-   server {
-       listen 80;
-       server_name _;
-       root /var/www/apps;
-       location / { try_files $uri $uri/ /index.html; }
-   }
-   ```
+The block it installs:
 
-2. **Writable web root** — the SSH user must be able to write to `/var/www/apps`. Run once on the server:
+```nginx
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    root /var/www/apps;
+    index index.html index.htm index.nginx-debian.html;
+    server_name _;
+    location / { try_files $uri $uri/ /index.html; }
+}
+```
 
-   ```bash
-   sudo mkdir -p /var/www/apps
-   sudo chown -R $USER:$USER /var/www/apps
-   ```
-
-   (Or set `"use_sudo": true` in `deploy` if your user has passwordless sudo.)
+`setup_nginx.py` needs either root SSH access or passwordless sudo on the server (one time). For day-to-day deploys, the SSH user only needs write access to `/var/www/apps`, which `setup_nginx.py` arranges for you.
 
 ---
 
@@ -147,7 +152,7 @@ Re-running deploy on an existing project replaces only that project's directory 
 | `AuthenticationException` | Wrong host/username/password — double-check. |
 | `Permission denied` on remote mkdir | Run the `chown` command from "Server prerequisites". |
 | Blank page after deploy | You opened `http://host/acme-demo` without the trailing slash. Add the slash. |
-| Refresh on a deep route (e.g. `/acme-demo/about`) shows wrong page | Known nginx-config limitation — see [`static-resource2nginx/REFERENCE.md`](./static-resource2nginx/REFERENCE.md#deep-link-spa-routing-under-a-sub-path) for three workarounds. |
+| Refresh on a deep route (e.g. `/acme-demo/about`) shows wrong page | Known nginx-config limitation — see [`deploy-static-resource2nginx/REFERENCE.md`](./deploy-static-resource2nginx/REFERENCE.md#deep-link-spa-routing-under-a-sub-path) for three workarounds. |
 
 For everything else, the two skills' own `REFERENCE.md` files have full detail.
 
@@ -158,5 +163,5 @@ For everything else, the two skills' own `REFERENCE.md` files have full detail.
 ```text
 /static-demo4domain-expert         # interview + scaffold demo
 # add server.config.json with 4 fields
-/static-resource2nginx             # build + upload, get URL
+/deploy-static-resource2nginx             # build + upload, get URL
 ```

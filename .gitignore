@@ -12,6 +12,13 @@
 node_modules/
 dist/
 
+# Python build artifacts and virtualenvs
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
 # Common secret file patterns
 *.pem
 *.key
