@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Claude local state — contains absolute paths / per-machine permissions
+.claude/settings.local.json
+.agents/
+
+# Deploy credentials — must never be committed
+**/server.config.json
+
+# Node / Vite build artifacts (from any generated demo projects)
+node_modules/
+dist/
+
+# Common secret file patterns
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+.env
+.env.*

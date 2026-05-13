@@ -1,0 +1,10 @@
+{
+  "server": {
+    "host": "",
+    "username": "",
+    "password": ""
+  },
+  "deploy": {
+    "project_name": ""
+  }
+}
